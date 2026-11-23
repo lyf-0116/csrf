@@ -21,8 +21,8 @@ the below:
     http.HandlerFunc("/route", CSRF(YourHandler))
 
 ... and then collect the token with `csrf.Token(r)` before passing it to the
-template, JSON body or HTTP header (you pick!). gorilla/csrf inspects the form body
-(first) and HTTP headers (second) on subsequent POST/PUT/PATCH/DELETE/etc. requests
+template, JSON body or HTTP header (you pick!). gorilla/csrf inspects the HTTP headers
+(first) and form body (second) on subsequent POST/PUT/PATCH/DELETE/etc. requests
 for the token.
 
 Note that the authentication key passed to `csrf.Protect([]byte(key))` should be

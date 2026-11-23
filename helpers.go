@@ -23,6 +23,10 @@ func Token(r *http.Request) string {
 	return ""
 }
 
+// defaultMaxMemory is the maximum amount of memory used when parsing a
+// multipart form, matching net/http's defaultMaxMemory.
+const defaultMaxMemory = 32 << 20 // 32 MB
+
 // FailureReason makes CSRF validation errors available in the request context.
 // This is useful when you want to log the cause of the error or report it to
 // client.
@@ -102,39 +106,63 @@ func unmask(issued []byte) []byte {
 	return xorToken(otp, masked)
 }
 
-// requestToken returns the issued token (pad + masked token) from the HTTP POST
-// body or HTTP header. It will return nil if the token fails to decode.
+// requestToken returns the issued token (pad + masked token) from the HTTP
+// header, POST form or multipart form, inspected in that order. A source
+// holding a value that fails to decode falls back to the next source. It
+// returns a nil token and no error if no token was provided at all, and an
+// error if a provided token fails to decode.
 func (cs *csrf) requestToken(r *http.Request) ([]byte, error) {
-	// 1. Check the HTTP header first.
-	issued := r.Header.Get(cs.opts.RequestHeader)
+	// decodeErr remembers the decoding error of the last non-empty value so
+	// that "a token was provided but is malformed" can be distinguished from
+	// "no token was provided".
+	var decodeErr error
 
-	// 2. Fall back to the POST (form) value.
-	if issued == "" {
-		issued = r.PostFormValue(cs.opts.FieldName)
+	decode := func(issued string) ([]byte, bool) {
+		if issued == "" {
+			return nil, false
+		}
+
+		decoded, err := base64.StdEncoding.DecodeString(issued)
+		if err != nil {
+			decodeErr = err
+			return nil, false
+		}
+
+		return decoded, true
 	}
 
-	// 3. Finally, fall back to the multipart form (if set).
-	if issued == "" && r.MultipartForm != nil {
-		vals := r.MultipartForm.Value[cs.opts.FieldName]
+	// 1. Check the HTTP header first.
+	if decoded, ok := decode(r.Header.Get(cs.opts.RequestHeader)); ok {
+		return decoded, nil
+	}
 
+	// 2. Fall back to the POST (form) value.
+	if decoded, ok := decode(r.PostFormValue(cs.opts.FieldName)); ok {
+		return decoded, nil
+	}
+
+	// 3. Finally, fall back to the multipart form. An upstream ParseForm
+	// call does not parse multipart bodies, so r.MultipartForm may still be
+	// nil here: parse it ourselves. ParseMultipartForm is a no-op if the
+	// body was already parsed, and its error is ignored as a non-multipart
+	// (or already consumed) body simply yields no token.
+	if r.MultipartForm == nil {
+		_ = r.ParseMultipartForm(defaultMaxMemory)
+	}
+	if r.MultipartForm != nil {
+		vals := r.MultipartForm.Value[cs.opts.FieldName]
 		if len(vals) > 0 {
-			issued = vals[0]
+			if decoded, ok := decode(vals[0]); ok {
+				return decoded, nil
+			}
 		}
 	}
 
-	// Return nil (equivalent to empty byte slice) if no token was found
-	if issued == "" {
-		return nil, nil
+	if decodeErr != nil {
+		return nil, decodeErr
 	}
 
-	// Decode the "issued" (pad + masked) token sent in the request. Return a
-	// nil byte slice on a decoding error (this will fail upstream).
-	decoded, err := base64.StdEncoding.DecodeString(issued)
-	if err != nil {
-		return nil, err
-	}
-
-	return decoded, nil
+	return nil, nil
 }
 
 // generateRandomBytes returns securely generated random bytes.

@@ -128,6 +128,115 @@ func TestMultipartFormToken(t *testing.T) {
 	}
 }
 
+// Test that we can extract a CSRF token from a multipart form even when an
+// upstream middleware has already called ParseForm on the request (which
+// does not parse multipart bodies).
+func TestMultipartFormTokenParsedUpstream(t *testing.T) {
+	s := http.NewServeMux()
+
+	// Make the token available outside of the handler for comparison.
+	var token string
+	s.HandleFunc("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		token = Token(r)
+		t := template.Must((template.New("base").Parse(testTemplate)))
+		err := t.Execute(w, map[string]interface{}{
+			TemplateTag: TemplateField(r),
+		})
+		if err != nil {
+			log.Printf("errored during executing the template: %v", err)
+		}
+	}))
+
+	r := createRequest("GET", "/", true)
+
+	rr := httptest.NewRecorder()
+	p := Protect(testKey)(s)
+	p.ServeHTTP(rr, r)
+
+	// Set up our multipart form
+	var b bytes.Buffer
+	mp := multipart.NewWriter(&b)
+	wr, err := mp.CreateFormField(fieldName)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = wr.Write([]byte(token))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mp.Close()
+
+	r = httptest.NewRequest("POST", "/", &b)
+	r.Host = "www.gorillatoolkit.org"
+
+	// Add the multipart header.
+	r.Header.Set("Content-Type", mp.FormDataContentType())
+	// Add Origin to pass the same-origin check.
+	r.Header.Set("Origin", "https://www.gorillatoolkit.org")
+
+	// Send back the issued cookie.
+	setCookie(rr, r)
+
+	// Simulate an upstream middleware that parses the form first. ParseForm
+	// does not parse multipart bodies, so the token is only reachable via
+	// r.MultipartForm after this.
+	if err := r.ParseForm(); err != nil {
+		t.Fatal(err)
+	}
+
+	rr = httptest.NewRecorder()
+	p.ServeHTTP(rr, r)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("middleware failed to pass to the next handler: got %v want %v",
+			rr.Code, http.StatusOK)
+	}
+
+	if body := rr.Body.String(); !strings.Contains(body, token) {
+		t.Fatalf("token not in response body: got %v want %v", body, token)
+	}
+}
+
+// Test that a token in the request header that fails to decode falls back to
+// the form value instead of failing the request outright.
+func TestRequestTokenHeaderDecodeFallback(t *testing.T) {
+	s := http.NewServeMux()
+
+	var token string
+	s.HandleFunc("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		token = Token(r)
+	}))
+
+	r := createRequest("GET", "/", true)
+
+	rr := httptest.NewRecorder()
+	p := Protect(testKey)(s)
+	p.ServeHTTP(rr, r)
+
+	// POST the token back in the form body, alongside a header value that
+	// fails to decode.
+	form := url.Values{}
+	form.Set(fieldName, token)
+
+	r = httptest.NewRequest("POST", "/", strings.NewReader(form.Encode()))
+	r.Host = "www.gorillatoolkit.org"
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.Header.Set("Origin", "https://www.gorillatoolkit.org")
+	r.Header.Set(headerName, "!!!not-base64!!!")
+
+	setCookie(rr, r)
+
+	rr = httptest.NewRecorder()
+	p.ServeHTTP(rr, r)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("middleware failed to pass to the next handler: got %v want %v",
+			rr.Code, http.StatusOK)
+	}
+}
+
 // TestMaskUnmaskTokens tests that a token traversing the mask -> unmask process
 // is correctly unmasked to the original 'real' token.
 func TestMaskUnmaskTokens(t *testing.T) {
