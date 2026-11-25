@@ -232,7 +232,7 @@ import (
 
 func main() {
     r := mux.NewRouter()
-    csrfMiddleware := csrf.Protect([]byte("32-byte-long-auth-key"), csrf.TrustedOrigins([]string{"ui.domain.com"}))
+    csrfMiddleware := csrf.Protect([]byte("32-byte-long-auth-key"), csrf.TrustedOrigins([]string{"https://ui.domain.com"}))
 
     api := r.PathPrefix("/api").Subrouter()
     api.Use(csrfMiddleware)
@@ -259,7 +259,22 @@ func GetUser(w http.ResponseWriter, r *http.Request) {
 }
 ```
 
-On the example above, you're authorizing requests from `ui.domain.com` to make valid CSRF requests to your application, so you can have your API server on another domain without problems.
+On the example above, you're authorizing requests from the origin
+`https://ui.domain.com` to make valid CSRF requests to your application, so you
+can have your API server on another domain without problems.
+
+Each `TrustedOrigins` entry is an origin in `scheme://host[:port]` form. Both
+the scheme and the host (including the port) of the request's `Origin` (or
+`Referer`) must match, so `https://ui.domain.com` and
+`http://ui.domain.com` are treated as different origins. Write `http://...`
+explicitly for a cleartext or local development origin, for example
+`http://localhost:3000`.
+
+For compatibility with older configuration, a scheme-less bare host such as
+`ui.domain.com` is still accepted and interpreted as `https://ui.domain.com`
+(a deprecation message is logged). A future major release will reject
+scheme-less entries at startup, so prefer the explicit `scheme://host[:port]`
+form.
 
 ### Google App Engine
 

@@ -120,14 +120,42 @@ func CookieName(name string) Option {
 	}
 }
 
-// TrustedOrigins configures a set of origins (Referers) that are considered as trusted.
-// This will allow cross-domain CSRF use-cases - e.g. where the front-end is served
-// from a different domain than the API server - to correctly pass a CSRF check.
+// TrustedOrigins configures a set of origins (from the request Origin or
+// Referer header) that are considered trusted. This allows cross-domain CSRF
+// use-cases - e.g. where the front-end is served from a different origin than
+// the API server - to correctly pass a CSRF check.
+//
+// Entries should be full origins in "scheme://host[:port]" form, for example
+// "https://ui.example.com". Both the scheme and the host (including the port)
+// of an incoming Origin/Referer must match a configured entry, so
+// "https://ui.example.com" and "http://ui.example.com" are distinct origins.
+//
+// Compatibility window: a scheme-less bare host such as "ui.example.com" is
+// still accepted and is interpreted as "https://ui.example.com" (a deprecation
+// message is logged). A future major release will panic at startup on
+// scheme-less entries instead. Configure "http://..." explicitly to trust a
+// cleartext/local origin.
+//
+// An entry that is empty or cannot be parsed into a host makes TrustedOrigins
+// panic, so invalid configuration fails at startup rather than silently
+// rejecting every cross-origin request.
 //
 // You should only provide origins you own or have full control over.
 func TrustedOrigins(origins []string) Option {
+	// Parse eagerly so that malformed configuration is reported at startup
+	// (when the option is applied) instead of on the first request.
+	parsedOrigins := make([]TrustedOrigin, 0, len(origins))
+	for _, entry := range origins {
+		origin, err := parseTrustedOrigin(entry)
+		if err != nil {
+			panic(err)
+		}
+		parsedOrigins = append(parsedOrigins, origin)
+	}
+
 	return func(cs *csrf) {
 		cs.opts.TrustedOrigins = origins
+		cs.opts.trustedOrigins = parsedOrigins
 	}
 }
 

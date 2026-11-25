@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"html/template"
+	"io"
 	"net/http"
 	"net/url"
 )
@@ -142,8 +143,12 @@ func (cs *csrf) requestToken(r *http.Request) ([]byte, error) {
 // fails to function correctly.
 func generateRandomBytes(n int) ([]byte, error) {
 	b := make([]byte, n)
-	_, err := rand.Read(b)
-	// err == nil only if len(b) == n
+	// Read via io.ReadFull against the (overridable, CSPRNG-backed)
+	// rand.Reader. This keeps the contract that a failure to fully fill b is
+	// returned as an error. Calling rand.Read directly is unsuitable here on
+	// Go 1.24+: it terminates the process when the reader returns an error,
+	// which makes the short-reader failure case unrecoverable in tests.
+	_, err := io.ReadFull(rand.Reader, b)
 	if err != nil {
 		return nil, err
 	}
