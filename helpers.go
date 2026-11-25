@@ -67,6 +67,38 @@ func TemplateField(r *http.Request) template.HTML {
 	return template.HTML("")
 }
 
+// Wire layout of an issued masked token:
+//
+//	[ one-time pad (tokenLength bytes) ][ masked token (tokenLength bytes) ]
+const (
+	maskedTokenLength = tokenLength * 2
+	otpStart          = 0
+	otpEnd            = tokenLength
+	maskedStart       = otpEnd
+	maskedEnd         = maskedTokenLength
+)
+
+// packMaskedToken is the single place that defines how the one-time pad and
+// masked token are concatenated on the wire.
+func packMaskedToken(otp, maskedToken []byte) []byte {
+	issued := make([]byte, maskedTokenLength)
+	copy(issued[otpStart:otpEnd], otp)
+	copy(issued[maskedStart:maskedEnd], maskedToken)
+	return issued
+}
+
+// unpackMaskedToken is the inverse of packMaskedToken. Issued tokens have
+// always used this OTP-first wire order; older unmask code only assigned the
+// halves to local variables in reverse. XOR commutativity made that harmless,
+// so historical tokens remain compatible with this parser.
+func unpackMaskedToken(issued []byte) (otp, maskedToken []byte) {
+	if len(issued) != maskedTokenLength {
+		return nil, nil
+	}
+
+	return issued[otpStart:otpEnd], issued[maskedStart:maskedEnd]
+}
+
 // mask returns a unique-per-request token to mitigate the BREACH attack
 // as per http://breachattack.com/#mitigations
 //
@@ -80,26 +112,23 @@ func mask(realToken []byte, _ *http.Request) string {
 		return ""
 	}
 
-	// XOR the OTP with the real token to generate a masked token. Append the
-	// OTP to the front of the masked token to allow unmasking in the subsequent
-	// request.
-	return base64.StdEncoding.EncodeToString(append(otp, xorToken(otp, realToken)...))
+	// XOR the OTP with the real token to generate a masked token, then pack
+	// the OTP and masked token in the shared wire layout.
+	maskedToken := xorToken(otp, realToken)
+	return base64.StdEncoding.EncodeToString(packMaskedToken(otp, maskedToken))
 }
 
 // unmask splits the issued token (one-time-pad + masked token) and returns the
 // unmasked request token for comparison.
 func unmask(issued []byte) []byte {
 	// Issued tokens are always masked and combined with the pad.
-	if len(issued) != tokenLength*2 {
+	otp, maskedToken := unpackMaskedToken(issued)
+	if otp == nil {
 		return nil
 	}
 
-	// We now know the length of the byte slice.
-	otp := issued[tokenLength:]
-	masked := issued[:tokenLength]
-
 	// Unmask the token by XOR'ing it against the OTP used to mask it.
-	return xorToken(otp, masked)
+	return xorToken(otp, maskedToken)
 }
 
 // requestToken returns the issued token (pad + masked token) from the HTTP POST
