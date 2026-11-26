@@ -98,14 +98,26 @@ type options struct {
 	Path   string
 	// Note that the function and field names match the case of the associated
 	// http.Cookie field instead of the "correct" HTTPOnly name that golint suggests.
-	HttpOnly       bool
-	Secure         bool
-	SameSite       SameSiteMode
-	RequestHeader  string
-	FieldName      string
-	ErrorHandler   http.Handler
-	CookieName     string
-	TrustedOrigins []string
+	HttpOnly      bool
+	Secure        bool
+	SameSite      SameSiteMode
+	RequestHeader string
+	FieldName     string
+	ErrorHandler  http.Handler
+	CookieName    string
+	CookiePrefix  string
+	// CookieNameFallback is an older cookie name accepted when the primary
+	// cookie is absent or invalid.
+	CookieNameFallback string
+	// FallbackCookieName is an alias field for an older cookie name.
+	FallbackCookieName string
+	// LegacyCookieName is an alias for CookieNameFallback.
+	LegacyCookieName string
+	// FallbackCookieNames lists additional older cookie names to read.
+	FallbackCookieNames []string
+	// CookiePrefixFallback also reads the unprefixed/default cookie name.
+	CookiePrefixFallback bool
+	TrustedOrigins       []string
 }
 
 // Protect is HTTP middleware that provides Cross-Site Request Forgery
@@ -158,6 +170,10 @@ type options struct {
 //		// framework.
 //	}
 func Protect(authKey []byte, opts ...Option) func(http.Handler) http.Handler {
+	if err := ValidateOptions(opts...); err != nil {
+		panic(err)
+	}
+
 	return func(h http.Handler) http.Handler {
 		cs := parseOptions(h, opts...)
 
@@ -175,8 +191,8 @@ func Protect(authKey []byte, opts ...Option) func(http.Handler) http.Handler {
 			cs.opts.FieldName = fieldName
 		}
 
-		if cs.opts.CookieName == "" {
-			cs.opts.CookieName = cookieName
+		if err := cs.prepareCookieOptions(); err != nil {
+			panic(err)
 		}
 
 		if cs.opts.RequestHeader == "" {
@@ -193,8 +209,7 @@ func Protect(authKey []byte, opts ...Option) func(http.Handler) http.Handler {
 		}
 
 		if cs.st == nil {
-			// Default to the cookieStore
-			cs.st = &cookieStore{
+			store := &cookieStore{
 				name:     cs.opts.CookieName,
 				maxAge:   cs.opts.MaxAge,
 				secure:   cs.opts.Secure,
@@ -203,6 +218,15 @@ func Protect(authKey []byte, opts ...Option) func(http.Handler) http.Handler {
 				path:     cs.opts.Path,
 				domain:   cs.opts.Domain,
 				sc:       cs.sc,
+			}
+			if len(cs.opts.FallbackCookieNames) > 0 {
+				cs.st = &fallbackCookieStore{
+					cookieStore:   store,
+					fallbackNames: cs.opts.FallbackCookieNames,
+				}
+			} else {
+				// Default to the cookieStore.
+				cs.st = store
 			}
 		}
 
@@ -225,7 +249,24 @@ func (cs *csrf) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Retrieve the token from the session.
 	// An error represents either a cookie that failed HMAC validation
 	// or that doesn't exist.
-	realToken, err := cs.st.Get(r)
+	var (
+		realToken   []byte
+		err         error
+		tokenSource string
+	)
+	if sourcedStore, ok := cs.st.(interface {
+		GetWithSource(*http.Request) ([]byte, string, error)
+	}); ok {
+		var source string
+		realToken, source, err = sourcedStore.GetWithSource(r)
+		tokenSource = source
+	} else {
+		realToken, err = cs.st.Get(r)
+		if err == nil {
+			tokenSource = cs.opts.CookieName
+		}
+	}
+
 	if err != nil || len(realToken) != tokenLength {
 		// If there was an error retrieving the token, the token doesn't exist
 		// yet, or it's the wrong length, generate a new token.
@@ -245,6 +286,8 @@ func (cs *csrf) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			cs.opts.ErrorHandler.ServeHTTP(w, r)
 			return
 		}
+	} else if tokenSource != "" && tokenSource != cs.opts.CookieName {
+		_ = cs.st.Save(realToken, w)
 	}
 
 	// Save the masked token to the request context

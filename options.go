@@ -120,6 +120,57 @@ func CookieName(name string) Option {
 	}
 }
 
+// CookiePrefix prepends a browser cookie prefix to the configured cookie name.
+// Recognized prefixes are "__Host-" and "__Secure-". Prefix attribute
+// requirements are validated when the middleware handler is constructed.
+func CookiePrefix(prefix string) Option {
+	return func(cs *csrf) {
+		cs.opts.CookiePrefix = prefix
+	}
+}
+
+// CookieNameFallback accepts an older cookie name when the primary cookie is
+// absent or invalid. New cookies are always written using CookieName.
+func CookieNameFallback(name string) Option {
+	return func(cs *csrf) {
+		cs.opts.CookieNameFallback = name
+	}
+}
+
+// FallbackCookieName is an alias for CookieNameFallback.
+func FallbackCookieName(name string) Option {
+	return func(cs *csrf) {
+		cs.opts.FallbackCookieName = name
+	}
+}
+
+// LegacyCookieName is an alias for CookieNameFallback.
+func LegacyCookieName(name string) Option {
+	return func(cs *csrf) {
+		cs.opts.LegacyCookieName = name
+	}
+}
+
+// FallbackCookieNames accepts additional older cookie names during a cookie
+// rename or prefix migration.
+func FallbackCookieNames(names ...string) Option {
+	return func(cs *csrf) {
+		cs.opts.FallbackCookieNames = append(cs.opts.FallbackCookieNames, names...)
+	}
+}
+
+// CookiePrefixFallback enables reading the unprefixed cookie name and the
+// library's default cookie name as fallbacks. When called without an argument,
+// the fallback is enabled; pass false to disable it explicitly.
+func CookiePrefixFallback(enabled ...bool) Option {
+	return func(cs *csrf) {
+		cs.opts.CookiePrefixFallback = true
+		if len(enabled) > 0 {
+			cs.opts.CookiePrefixFallback = enabled[0]
+		}
+	}
+}
+
 // TrustedOrigins configures a set of origins (Referers) that are considered as trusted.
 // This will allow cross-domain CSRF use-cases - e.g. where the front-end is served
 // from a different domain than the API server - to correctly pass a CSRF check.

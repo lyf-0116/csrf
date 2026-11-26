@@ -325,6 +325,31 @@ You might want to set up a root path for all the cookies; that way, the CSRF wil
     )
 ```
 
+### Cookie prefixes and rollback
+
+Cookie names beginning with `__Host-` receive browser-enforced protection
+against cookie overriding. The browser requires `Secure`, `Path=/`, and no
+`Domain`; `__Secure-` requires `Secure`.
+
+```go
+CSRF := csrf.Protect(
+    []byte("a-32-byte-long-key-goes-here"),
+    csrf.CookieName("__Host-_gorilla_csrf"),
+    csrf.Path("/"),
+    // Accept the previous cookie while clients migrate. Successful requests
+    // with the old cookie receive a replacement using the prefixed name.
+    csrf.CookieNameFallback("_gorilla_csrf"),
+)
+```
+
+An empty path is normalized to `/` for `__Host-` cookies. Other incompatible
+prefix configuration is rejected when the middleware is constructed.
+`CookiePrefixFallback()` automatically reads the unprefixed name and the
+default `_gorilla_csrf` name during migration.
+
+Keep fallback reads only for the migration window; the legacy cookie does not
+provide the browser-enforced anti-override guarantees of a prefixed name.
+
 ### Setting Options
 
 What about providing your own error handler and changing the HTTP header the
