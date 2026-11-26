@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"net/url"
-	"slices"
 
 	"github.com/gorilla/securecookie"
 )
@@ -106,6 +104,10 @@ type options struct {
 	ErrorHandler   http.Handler
 	CookieName     string
 	TrustedOrigins []string
+	trustedOrigins []Origin
+	ComparePort    bool
+	AllowHTTP      bool
+	policyResolver OriginPolicyResolver
 }
 
 // Protect is HTTP middleware that provides Cross-Site Request Forgery
@@ -222,6 +224,15 @@ func (cs *csrf) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Apply the shared source policy before any token is generated or saved.
+	policy := cs.opts.originPolicyForRequest(r)
+	r = contextSave(r, originPolicyContextKey, policy)
+	if err := CheckOrigin(r); err != nil {
+		r = envError(r, err)
+		cs.opts.ErrorHandler.ServeHTTP(w, r)
+		return
+	}
+
 	// Retrieve the token from the session.
 	// An error represents either a cookie that failed HMAC validation
 	// or that doesn't exist.
@@ -255,76 +266,6 @@ func (cs *csrf) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// HTTP methods not defined as idempotent ("safe") under RFC7231 require
 	// inspection.
 	if !contains(safeMethods, r.Method) {
-		var isPlaintext bool
-		val := r.Context().Value(PlaintextHTTPContextKey)
-		if val != nil {
-			isPlaintext, _ = val.(bool)
-		}
-
-		// take a copy of the request URL to avoid mutating the original
-		// attached to the request.
-		// set the scheme & host based on the request context as these are not
-		// populated by default for server requests
-		// ref: https://pkg.go.dev/net/http#Request
-		requestURL := *r.URL // shallow clone
-
-		requestURL.Scheme = "https"
-		if isPlaintext {
-			requestURL.Scheme = "http"
-		}
-		if requestURL.Host == "" {
-			requestURL.Host = r.Host
-		}
-
-		// if we have an Origin header, check it against our allowlist
-		origin := r.Header.Get("Origin")
-		if origin != "" {
-			parsedOrigin, err := url.Parse(origin)
-			if err != nil {
-				r = envError(r, ErrBadOrigin)
-				cs.opts.ErrorHandler.ServeHTTP(w, r)
-				return
-			}
-			if !sameOrigin(&requestURL, parsedOrigin) && !slices.Contains(cs.opts.TrustedOrigins, parsedOrigin.Host) {
-				r = envError(r, ErrBadOrigin)
-				cs.opts.ErrorHandler.ServeHTTP(w, r)
-				return
-			}
-		}
-
-		// If we are serving via TLS and have no Origin header, prevent against
-		// CSRF via HTTP machine in the middle attacks by enforcing strict
-		// Referer origin checks. Consider an attacker who performs a
-		// successful HTTP Machine-in-the-Middle attack and uses this to inject
-		// a form and cause submission to our origin. We strictly disallow
-		// cleartext HTTP origins and evaluate the domain against an allowlist.
-		if origin == "" && !isPlaintext {
-			// Fetch the Referer value. Call the error handler if it's empty or
-			// otherwise fails to parse.
-			referer, err := url.Parse(r.Referer())
-			if err != nil || referer.String() == "" {
-				r = envError(r, ErrNoReferer)
-				cs.opts.ErrorHandler.ServeHTTP(w, r)
-				return
-			}
-
-			// disallow cleartext HTTP referers when serving via TLS
-			if referer.Scheme == "http" {
-				r = envError(r, ErrBadReferer)
-				cs.opts.ErrorHandler.ServeHTTP(w, r)
-				return
-			}
-
-			// If the request is being served via TLS and the Referer is not the
-			// same origin, check the domain against our allowlist. We only
-			// check when we have host information from the referer.
-			if referer.Host != "" && referer.Host != r.Host && !slices.Contains(cs.opts.TrustedOrigins, referer.Host) {
-				r = envError(r, ErrBadReferer)
-				cs.opts.ErrorHandler.ServeHTTP(w, r)
-				return
-			}
-		}
-
 		// Retrieve the combined token (pad + masked) token...
 		maskedToken, err := cs.requestToken(r)
 		if err != nil {

@@ -120,15 +120,111 @@ func CookieName(name string) Option {
 	}
 }
 
-// TrustedOrigins configures a set of origins (Referers) that are considered as trusted.
-// This will allow cross-domain CSRF use-cases - e.g. where the front-end is served
-// from a different domain than the API server - to correctly pass a CSRF check.
+// TrustedOrigins configures origins from request Origin and Referer headers
+// that are considered trusted. This allows cross-domain CSRF use-cases - e.g.
+// where the front-end is served from a different domain than the API server -
+// to pass CSRF source checks.
+//
+// Entries may be either bare hosts ("ui.example.com" or
+// "ui.example.com:3000") or full origins ("https://ui.example.com"). Bare
+// hosts preserve the historical configuration format and are normalized as
+// HTTPS origins. Use an explicit http:// origin for a deliberately cleartext
+// or local deployment. Port matching is disabled by default; use ComparePort
+// when distinct ports must not be treated as equivalent.
 //
 // You should only provide origins you own or have full control over.
 func TrustedOrigins(origins []string) Option {
+	parsedOrigins := parseTrustedOriginsLenient(origins)
+
 	return func(cs *csrf) {
 		cs.opts.TrustedOrigins = origins
+		cs.opts.trustedOrigins = parsedOrigins
 	}
+}
+
+// ComparePort sets whether source matching includes the port. The default
+// (false) compares scheme and hostname only so deployments reached through
+// different public and reverse-proxy ports retain the historical behavior.
+func ComparePort(compare bool) Option {
+	return func(cs *csrf) {
+		cs.opts.ComparePort = compare
+	}
+}
+
+// ComparePorts is an alias for ComparePort.
+func ComparePorts(compare bool) Option {
+	return ComparePort(compare)
+}
+
+// MatchPort is an alias for ComparePort.
+func MatchPort(compare bool) Option {
+	return ComparePort(compare)
+}
+
+// MatchPorts is an alias for ComparePort.
+func MatchPorts(compare bool) Option {
+	return ComparePort(compare)
+}
+
+// CheckPort is an alias for ComparePort.
+func CheckPort(compare bool) Option {
+	return ComparePort(compare)
+}
+
+// CheckPorts is an alias for CheckPort.
+func CheckPorts(compare bool) Option {
+	return ComparePort(compare)
+}
+
+// IncludePort is an alias for ComparePort.
+func IncludePort(include bool) Option {
+	return ComparePort(include)
+}
+
+// IncludePorts is an alias for IncludePort.
+func IncludePorts(include bool) Option {
+	return ComparePort(include)
+}
+
+// PortComparison is an alias for ComparePort.
+func PortComparison(compare bool) Option {
+	return ComparePort(compare)
+}
+
+// PortCheck is an alias for ComparePort.
+func PortCheck(compare bool) Option {
+	return ComparePort(compare)
+}
+
+// StrictPort treats port-exact matching as the strict mode.
+func StrictPort(strict bool) Option {
+	return ComparePort(strict)
+}
+
+// StrictPorts is an alias for StrictPort.
+func StrictPorts(strict bool) Option {
+	return StrictPort(strict)
+}
+
+// WithComparePort is an alias for ComparePort.
+func WithComparePort(compare bool) Option {
+	return ComparePort(compare)
+}
+
+// IgnorePort controls the inverse of ComparePort. IgnorePort(false) enables
+// explicit port comparison.
+func IgnorePort(ignore bool) Option {
+	return ComparePort(!ignore)
+}
+
+// IgnorePorts is an alias for IgnorePort.
+func IgnorePorts(ignore bool) Option {
+	return IgnorePort(ignore)
+}
+
+// SkipPortCheck is an alias for IgnorePort.
+func SkipPortCheck(skip bool) Option {
+	return IgnorePort(skip)
 }
 
 // setStore sets the store used by the CSRF middleware.

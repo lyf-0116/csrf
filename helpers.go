@@ -7,13 +7,16 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
-	"net/url"
 )
 
 // Token returns a masked CSRF token ready for passing into HTML template or
 // a JSON response body. An empty token will be returned if the middleware
 // has not been applied (which will fail subsequent validation).
 func Token(r *http.Request) string {
+	if CheckOrigin(r) != nil {
+		return ""
+	}
+
 	if val, err := contextGet(r, tokenKey); err == nil {
 		if maskedToken, ok := val.(string); ok {
 			return maskedToken
@@ -150,12 +153,6 @@ func generateRandomBytes(n int) ([]byte, error) {
 
 	return b, nil
 
-}
-
-// sameOrigin returns true if URLs a and b share the same origin. The same
-// origin is defined as host (which includes the port) and scheme.
-func sameOrigin(a, b *url.URL) bool {
-	return (a.Scheme == b.Scheme && a.Host == b.Host)
 }
 
 // compare securely (constant-time) compares the unmasked token from the request

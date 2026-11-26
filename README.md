@@ -232,7 +232,7 @@ import (
 
 func main() {
     r := mux.NewRouter()
-    csrfMiddleware := csrf.Protect([]byte("32-byte-long-auth-key"), csrf.TrustedOrigins([]string{"ui.domain.com"}))
+    csrfMiddleware := csrf.Protect([]byte("32-byte-long-auth-key"), csrf.TrustedOrigins([]string{"https://ui.domain.com"}))
 
     api := r.PathPrefix("/api").Subrouter()
     api.Use(csrfMiddleware)
@@ -259,7 +259,21 @@ func GetUser(w http.ResponseWriter, r *http.Request) {
 }
 ```
 
-On the example above, you're authorizing requests from `ui.domain.com` to make valid CSRF requests to your application, so you can have your API server on another domain without problems.
+On the example above, you're authorizing requests from `https://ui.domain.com`
+to make valid CSRF requests to your application, so you can have your API server
+on another domain without problems.
+
+`TrustedOrigins` accepts full origins (`https://ui.domain.com:8443`) and
+historical bare hosts (`ui.domain.com`). Bare hosts are normalized as HTTPS
+origins; write `http://ui.domain.com:3000` explicitly for a cleartext local or
+reverse-proxy origin. Scheme and hostname are always compared. Port comparison
+is disabled by default to preserve cross-port deployments; pass
+`csrf.ComparePort(true)` when ports must also match.
+
+Mount a separate `csrf.Protect(...)` instance on a route that needs a different
+policy, or pass `csrf.WithOriginPolicyResolver(...)` to derive one from the
+request path. The selected policy is shared by middleware, validation and
+`csrf.Token`.
 
 ### Google App Engine
 
